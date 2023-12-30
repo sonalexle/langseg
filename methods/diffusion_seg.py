@@ -26,7 +26,7 @@ def normalize_ca(ca, lab_ids=None):
     return ca
 
 
-def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1):
+def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1, minmax_norm=True):
     # this is the random walk algorithm
     # ca: (bsz, hw, k)
     # sa: (bsz, hw, hw)
@@ -40,7 +40,8 @@ def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1):
     sa = sa / sa.sum(dim=-1, keepdim=True) # sa = transition matrix (row sum = 1)
     sa = torch.linalg.matrix_power(sa, walk_len)
     agg_map = torch.bmm(sa, ca) # (bsz, hw, k)
-    agg_map = normalize_ca(agg_map)
+    if minmax_norm:
+        agg_map = normalize_ca(agg_map)
     return agg_map
 
 
@@ -52,6 +53,8 @@ def get_random_walk_mask(
     # agg_map: (bsz, hw, k)
     if output_size is not None:
         agg_map = upscale_attn(agg_map, output_size, is_cross=True)
+    else:
+        output_size = int(agg_map.shape[1] ** 0.5)
 
     class_map = agg_map[..., concept_ind]
     mask = torch.zeros_like(agg_map[..., 0])
