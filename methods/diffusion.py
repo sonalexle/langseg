@@ -59,7 +59,7 @@ def get_attention_maps(
             #         attn_map[i, ..., lids[0]] = attn_map[i, ..., lids].mean(dim=-1)
 
         if average_layers and not simple_average:
-            attn_map = upscale_attn(attn_map, output_size, is_cross=layer.endswith("attn2"))
+            attn_map = upscale_attn(attn_map.float(), output_size, is_cross=layer.endswith("attn2"))
 
         # attn_map = reshape_attention_maps_to_batch(attn_map, batch_size).mean(dim=1) # (BT, HW, *L) -> (B, HW, *L)
 
@@ -104,7 +104,7 @@ def average_attention_layers(attn_maps, *, batch_size, device, is_cross=False, r
         sum_res = sum(resolutions)
     seq_len = attn_maps[0].shape[2:]
     attn_merged = torch.zeros(
-        (batch_size, max_res**2, *seq_len), device=device
+        (batch_size, max_res**2, *seq_len), device=device, dtype=torch.float32
     )
     for i, attn in enumerate(attn_maps):
         res_sa = resolutions[i]
