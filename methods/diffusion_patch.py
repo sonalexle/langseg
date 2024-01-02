@@ -347,7 +347,7 @@ def restore_original_attn_methods(unet, original_attn_methods, layers_to_restore
         if "down" in net_name or "up" in net_name or "mid" in net_name:
             n_layers += inner_restore(net_name, net, original_attn_methods, 0)
     
-    print(f"Restored {n_layers} attention layers.")
+    # print(f"Restored {n_layers} attention layers.")
     if hooks is not None:
         remove_hooks(hooks, lambda layer: layer in layers_to_restore)
 

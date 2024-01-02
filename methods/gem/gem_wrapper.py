@@ -116,7 +116,7 @@ class GEMWrapper(nn.Module):
         text_embeddings = self.encode_text(flatten_text)  # [B, num_prompt, dim]
 
         # Image-Text matching
-        img_txt_matching = 100 * image_feat[:, 1:] @ text_embeddings.transpose(-1, -2)  # [B, N, num_prompt]
+        img_txt_matching = image_feat[:, 1:] @ text_embeddings.transpose(-1, -2)  # [B, N, num_prompt]
         img_txt_matching = rearrange(img_txt_matching, 'b (w h) c -> b c w h',
                                      w=W // self.patch_size, h=H // self.patch_size)  # [B, num_prompt, w, h]
 
