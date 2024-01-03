@@ -89,6 +89,10 @@ class COCOStuffDataset(BaseDataset):
                                167: 17, 168: 22, 169: 14, 170: 18, 171: 18, 172: 18, 173: 18, 174: 18, 175: 18, 176: 18,
                                177: 26, 178: 26, 179: 19, 180: 19, 181: 24} if self.use_27 else coco_stuff_182_to_171
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.remapping = torch.tensor(list(self.fine_to_coarse.keys())), torch.tensor(list(self.fine_to_coarse.values()))
+        self.remapping = self.remapping[0].to(self.device), self.remapping[1].to(self.device)
+
         self._label_names = [
             "ground-stuff",
             "plant-stuff",
@@ -158,9 +162,7 @@ class COCOStuffDataset(BaseDataset):
             label = self.label_transform(label).squeeze(0)
             label[label == 255] = -1  # to be consistent with 10k
 
-            coarse_label = torch.zeros_like(label)
-            for fine, coarse in self.fine_to_coarse.items():
-                coarse_label[label == fine] = coarse
+            coarse_label = remap_values(self.remapping, label.to(self.device)).cpu()
             coarse_label[label == -1] = -1
 
             if self.coarse_labels:
@@ -176,6 +178,11 @@ class COCOStuffDataset(BaseDataset):
 
     def __len__(self):
         return len(self.image_files)
+
+
+def remap_values(remapping, x):
+    index = torch.bucketize(x.ravel(), remapping[0])
+    return remapping[1][index].reshape(x.shape)
 
 
 def create_pascal_label_colormap() -> np.ndarray:
@@ -451,6 +458,7 @@ coco_stuff_182_to_27 = {
 coco_stuff_182_to_171: dict = {}
 cnt: int = 0
 for label_id in coco_stuff_182_to_27:
+    # +1 to match labels in label_id_to_category_fine
     if label_id + 1 in [12, 26, 29, 30, 45, 66, 68, 69, 71, 83, 91]:  # note that +1 is added
         continue
     coco_stuff_182_to_171[label_id] = cnt
@@ -464,4 +472,4 @@ for fine, coarse in coco_stuff_182_to_27.items():
     coco_stuff_171_to_27[cnt] = coarse
     cnt += 1
 
-coco_stuff_categories_fine = list(label_id_to_category_fine.values())[1:]  # exclude background
+coco_stuff_categories_fine = list(label_id_to_category_fine.values())[1:]  # exclude background, indices matching with coco_stuff_182_to_27
