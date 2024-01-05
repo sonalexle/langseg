@@ -118,7 +118,7 @@ def average_attention_layers(attn_maps, *, batch_size, device, is_cross=False, r
             rows = all_indices.unsqueeze(1).div(factor, rounding_mode="floor")
             cols = all_indices.unsqueeze(0).div(factor, rounding_mode="floor")
             indices = (rows * res_sa + cols).flatten().long()
-            # attn = attn / attn.sum(dim=-1, keepdim=True)
+            attn = attn / attn.sum(dim=-1, keepdim=True) # can disable this
             attn = attn[:, indices, ...]
         elif upscale_cross:
             attn = upscale_attn(attn, max_res, is_cross=True)

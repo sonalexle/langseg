@@ -1,6 +1,7 @@
 import torch
 from torch.nn import functional as F
 from torch_kmeans import KMeans # for k-means on the GPU
+import numpy as np
 from sklearn.cluster import spectral_clustering
 
 from methods.diffusion import upscale_attn
@@ -19,14 +20,14 @@ def normalize_ca(ca, lab_ids=None):
     # min-max normalize spatially
     min_val = ca.min(dim=1, keepdim=True).values
     max_val = ca.max(dim=1, keepdim=True).values
-    ca = (ca - torch.abs(min_val)) / (max_val - min_val)
+    ca = (ca - torch.abs(min_val)) / ((max_val - min_val) + 1e-10)
     if input_ndim == 4:
         res = int(ca.shape[1]**0.5)
         ca = ca.view(bsz, res, res, -1)
     return ca
 
 
-def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1, minmax_norm=True):
+def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1, minmax_norm=True, ca_norm=True):
     # this is the random walk algorithm
     # ca: (bsz, hw, k)
     # sa: (bsz, hw, hw)
@@ -34,7 +35,8 @@ def get_agg_map(ca, sa, concept_ind=None, beta=1, walk_len=1, minmax_norm=True):
     assert sa.ndim == 3
     # ca: probability vector, ca[i,k] = prob random walk at pixel i for each class k
     # ca = normalize_ca(ca)
-    ca = ca / ca.sum(dim=-2, keepdim=True)
+    if ca_norm:
+        ca = ca / (ca.sum(dim=-2, keepdim=True) + 1e-10)
     sa = sa.permute(0, 2, 1) # (bsz, (h,w), hw)
     sa = torch.pow(sa, beta)
     sa = sa / sa.sum(dim=-1, keepdim=True) # sa = transition matrix (row sum = 1)
@@ -62,7 +64,6 @@ def get_random_walk_mask(
     # class map (b, hw, k)
     for i in reversed(range(len(concept_ind))):
         mask[m == i] = concept_ind[i] # index in input_ids
-    zeros = torch.zeros_like(mask)
 
     pred_mask = torch.zeros_like(mask)
     for i, c in enumerate(concepts): # concept_ind is aligned with concepts
@@ -106,25 +107,34 @@ def run_specclust_sklearn(A, n_clusters=10, n_vecs=10, output_size=None):
     return clusters.long()
 
 
-def assign_names_to_clusters(clusters, ca, concept_ind, concepts, output_size=None, bg_thresh=0.35):
-    # ca: (b, hw, k)
-    # clusters: (b, h, w)
+def assign_names_to_clusters(
+        clusters, ca, concept_ind, concepts, output_size=None,
+        bg_thresh=None, minmax_norm=True, voting="mean"
+    ):
+    # ca: (b, hw, c)
     assert ca.ndim == 3
-    bsz, res = ca.shape[0], int(ca.shape[1]**0.5)
+    bsz = ca.shape[0]
+    assert bsz == clusters.shape[0]
     if output_size is not None:
         nca = upscale_attn(ca, output_size, is_cross=True)
-        res = output_size
     else:
         nca = ca
-    nca = nca.view(bsz, res, res, -1)
-    nca = normalize_ca(nca, concept_ind)
+    if minmax_norm:
+        nca = normalize_ca(nca)
     cluster_names = {}
-    for c in range(len(clusters.unique())):
-        cluster_mask = torch.zeros_like(clusters)
-        cluster_mask[clusters == c] = 1
-        score_maps = [cluster_mask * nca[..., i] for i in range(len(concept_ind))]
-        scores = torch.tensor([score_map.sum() / cluster_mask.sum() for score_map in score_maps])
-        cluster_names[c] = concepts[torch.argmax(scores)]# if scores.max() > bg_thresh else "background"
+    for c in clusters.unique().tolist():
+        if c == -1: continue
+        if voting == "majority":
+            logits = nca[(clusters == c).view(bsz,-1)].to("cpu", torch.float).numpy()
+            index = logits.argmax(axis=-1)
+            category = concepts[int(np.median(index))]
+        else:
+            scores = nca[(clusters == c).view(bsz,-1)].mean(dim=0)
+            scores = scores[..., concept_ind]
+            category = concepts[torch.argmax(scores)] # if scores.max() > bg_thresh else "background"
+            if bg_thresh is not None and scores.max() < bg_thresh:
+                category = "background"
+        cluster_names[c] = category
     return cluster_names
 
 
@@ -132,13 +142,17 @@ def get_specclust_mask(
     ca, sa,
     cat_to_label_id: dict,
     concept_ind: list, concepts: list,
-    output_size=None, bg_thresh=0.35,
+    output_size=None, bg_thresh=None,
+    minmax_norm=True,
     method="torch", decomp="svd"
 ):
     clust_method = run_specclust_torch if method == "torch" else run_specclust_sklearn
     kwargs = {"decomp": decomp} if method == "torch" else {}
     clusters = clust_method(sa, n_clusters=20, n_vecs=20, output_size=output_size, **kwargs)
-    cluster_names = assign_names_to_clusters(clusters, ca, concept_ind, concepts, output_size=output_size, bg_thresh=bg_thresh)
+    cluster_names = assign_names_to_clusters(
+        clusters, ca, concept_ind, concepts,
+        output_size=output_size, bg_thresh=bg_thresh, minmax_norm=minmax_norm
+    )
     pred_mask = torch.zeros_like(clusters)
     for k in cluster_names.keys(): # cluster_id -> cluster_name (label name) -> label_id
         pred_mask[clusters == k] = cat_to_label_id[cluster_names[k]]
